@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("rh-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/theme.css">
+<title>Create account · Request Hub</title>
+</head>
+<body>
+  <main class="auth">
+    <section class="auth-brand">
+      <div class="logo-card"><img src="/img/logo.png" alt="Steniel Graham Packaging Philippines Corporation"></div>
+      <p class="brand-line">Requests, approvals and records for Steniel Graham staff.</p>
+    </section>
+    <section class="auth-panel">
+      <button type="button" class="icon-btn theme-corner" data-theme-toggle></button>
+      <form class="auth-form" id="form" novalidate>
+        <h1>Create your account</h1>
+        <p class="sub">HR approves new accounts and assigns your role before you can log in.</p>
+        <div id="msg" class="msg" role="alert" hidden></div>
+        <div class="field">
+          <label for="fullName">Full name</label>
+          <input id="fullName" type="text" autocomplete="name" maxlength="80" required>
+        </div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <div class="pw-wrap"><input id="password" type="password" autocomplete="new-password" minlength="8" required data-eye></div>
+          <span class="hint">At least 8 characters.</span>
+        </div>
+        <button class="btn btn-primary btn-block" id="submit" type="submit">Sign up</button>
+        <p class="auth-alt">Already have an account? <a href="/login.html">Log in</a></p>
+      </form>
+    </section>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/app.js"></script>
+  <script>
+    const form = document.getElementById('form');
+    const msg = document.getElementById('msg');
+    const btn = document.getElementById('submit');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msg.hidden = true;
+      const fullName = document.getElementById('fullName').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      if (fullName.length < 2) { RH.showMsg(msg, 'Enter your full name.', 'error'); return; }
+      if (!email) { RH.showMsg(msg, 'Enter your email address.', 'error'); return; }
+      if (password.length < 8) { RH.showMsg(msg, 'Use a password with at least 8 characters.', 'error'); return; }
+      btn.disabled = true; btn.textContent = 'Creating account…';
+      try {
+        const data = await RH.api('/auth/signup', { method: 'POST', body: { fullName, email, password } });
+        form.reset();
+        RH.showMsg(msg, data.message, 'success');
+        btn.textContent = 'Account created';
+      } catch (err) {
+        RH.showMsg(msg, err.message, 'error');
+        btn.disabled = false; btn.textContent = 'Sign up';
+      }
+    });
+  </script>
+</body>
+</html>

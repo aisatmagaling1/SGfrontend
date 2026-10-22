@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("rh-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/theme.css">
+<title>Approvals · Request Hub</title>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/config.js"></script>
+  <script src="/js/app.js"></script>
+  
+  <script>
+    (async () => {
+      const user = await RH.requireUser({ roles: ['supervisor', 'manager', 'hr'] });
+      const shell = RH.renderShell(user, 'approvals');
+      shell.setTitle('Approvals');
+      shell.main.innerHTML = '<section class="card"><div class="card-head"><h2>Waiting for your approval</h2></div><div id="list"></div></section>';
+      async function load() {
+        const data = await RH.api('/requests/queue');
+        document.getElementById('list').innerHTML = RH.requestTable(data.requests, { showRequester: true, empty: 'Nothing is waiting for you right now.' });
+      }
+      await load();
+      RH.live(load);
+    })();
+  </script>
+</body>
+</html>

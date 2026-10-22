@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("rh-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/theme.css">
+<title>Dashboard · Request Hub</title>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/config.js"></script>
+  <script src="/js/app.js"></script>
+  <script src="/js/forms.js"></script>
+  <script>
+    (async () => {
+      const user = await RH.requireUser();
+      const shell = RH.renderShell(user, 'dashboard');
+      shell.setTitle('Dashboard');
+      const filer = ['employee', 'supervisor', 'manager', 'hr'].includes(user.role);
+      const approver = ['supervisor', 'manager', 'hr'].includes(user.role);
+      const F = window.RH_FORMS;
+      const tiles = Object.keys(F.FORMS).map((k) => '<a class="form-tile" href="/new-request.html?form=' + k + '"><strong>' +
+        RH.esc(F.FORMS[k].label) + '</strong><span>' + RH.esc(F.FORMS[k].blurb) + '</span></a>').join('');
+
+      shell.main.innerHTML =
+        (approver ? '<section class="card" id="queue-card"></section>' : '') +
+        (user.role === 'hr' ? '<section class="card" id="pending-card"></section>' : '') +
+        (filer ? '<section class="card"><h2>File a request</h2><div class="form-grid">' + tiles + '</div></section>' +
+          '<section class="card"><div class="card-head"><h2>Your latest requests</h2><a href="/requests.html">See all</a></div><div id="mine"></div></section>' : '') +
+        (user.role === 'accounting' ? '<section class="card"><h2>Records</h2><p>You can view every request and its history. Accounting cannot approve requests.</p>' +
+          '<a class="btn btn-primary" href="/recent.html">Open recent requests</a></section>' : '');
+
+      async function refresh() {
+        if (approver) {
+          const q = (await RH.api('/requests/queue')).requests.length;
+          document.getElementById('queue-card').innerHTML = '<h2>Waiting for your approval <span class="count">' + q + '</span></h2>' +
+            '<p>' + (q ? 'These requests are your turn to approve or reject.' : 'Nothing is waiting for you right now.') + '</p>' +
+            '<a class="btn btn-primary" href="/approvals.html">Open approvals</a>';
+        }
+        if (user.role === 'hr') {
+          const n = (await RH.api('/users')).users.filter((u) => u.status === 'pending').length;
+          document.getElementById('pending-card').innerHTML = '<h2>Accounts waiting for approval <span class="count">' + n + '</span></h2>' +
+            '<p>' + (n ? 'New people have signed up and need a role before they can log in.' : 'No one is waiting right now.') + '</p>' +
+            '<a class="btn btn-primary" href="/users.html">Manage users</a>';
+        }
+        if (filer) {
+          const mine = (await RH.api('/requests/mine')).requests.slice(0, 5);
+          document.getElementById('mine').innerHTML = RH.requestTable(mine, { empty: 'You have not filed any requests yet. Pick a form above to start.' });
+        }
+      }
+      await refresh();
+      if (approver || filer) RH.live(refresh);
+    })();
+  </script>
+</body>
+</html>

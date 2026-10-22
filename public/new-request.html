@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("rh-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/theme.css">
+<title>New request · Request Hub</title>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/config.js"></script>
+  <script src="/js/app.js"></script>
+  <script src="/js/forms.js"></script>
+  <script>
+    (async () => {
+      const user = await RH.requireUser({ roles: ['employee', 'supervisor', 'manager', 'hr'] });
+      const shell = RH.renderShell(user, 'requests');
+      const F = window.RH_FORMS;
+      const key = new URLSearchParams(location.search).get('form');
+
+      if (!key || !F.FORMS[key]) {
+        shell.setTitle('New request');
+        shell.main.innerHTML = '<section class="card"><h2>Choose a form</h2><div class="form-grid">' +
+          Object.keys(F.FORMS).map((k) => '<a class="form-tile" href="/new-request.html?form=' + k + '"><strong>' +
+            RH.esc(F.FORMS[k].label) + '</strong><span>' + RH.esc(F.FORMS[k].blurb) + '</span></a>').join('') + '</div></section>';
+        return;
+      }
+
+      const def = F.FORMS[key];
+      shell.setTitle(def.label);
+      const fields = def.fields.concat([{ key: 'reason', label: def.reasonLabel || 'Reason', type: 'textarea' }]);
+
+      function control(f) {
+        const id = 'f-' + f.key;
+        const req = f.optional ? '' : ' required';
+        if (f.type === 'textarea') return '<textarea id="' + id + '" maxlength="2000"' + req + '></textarea>';
+        if (f.type === 'select') {
+          return '<select id="' + id + '"' + req + '><option value="">Choose…</option>' +
+            f.options.map((o) => '<option value="' + RH.esc(o[0]) + '">' + RH.esc(o[1]) + '</option>').join('') + '</select>';
+        }
+        const type = { text: 'text', date: 'date', time: 'time', number: 'number' }[f.type];
+        const extra = f.type === 'number' ? ' min="0" step="0.01" inputmode="decimal"' : (f.type === 'text' ? ' maxlength="200"' : '');
+        return '<input id="' + id + '" type="' + type + '"' + extra + req + '>';
+      }
+
+      const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      shell.main.innerHTML = '<section class="card form-card"><form id="form" novalidate>' +
+        '<div class="form-meta"><div><small>Employee</small><strong>' + RH.esc(user.fullName) + '</strong></div>' +
+        '<div><small>Date filed</small><strong>' + RH.esc(today) + '</strong></div></div>' +
+        (key === 'leave' ? '<p class="balance-note" id="balance"></p>' : '') +
+        fields.map((f) => '<div class="field"><label for="f-' + f.key + '">' + RH.esc(f.label) + (f.optional ? ' (optional)' : '') + '</label>' +
+          control(f) + '<span class="err" id="e-' + f.key + '" hidden></span></div>').join('') +
+        '<div class="preview" id="preview" hidden></div>' +
+        '<div id="msg" class="msg" role="alert" hidden></div>' +
+        '<div class="btn-row"><button class="btn btn-primary" id="submit" type="submit">Submit request</button>' +
+        '<a class="btn" href="/new-request.html">Choose a different form</a></div></form></section>';
+
+      const val = (k) => document.getElementById('f-' + k).value;
+      function values() { const o = {}; fields.forEach((f) => { o[f.key] = val(f.key); }); return o; }
+
+      function balanceNote() {
+        const el = document.getElementById('balance');
+        if (!el) return;
+        const t = val('leaveType');
+        el.textContent = t === 'sick' ? 'You have ' + user.sickDays + ' day(s) of sick leave left.'
+          : t === 'vacation' ? 'You have ' + user.vacationDays + ' day(s) of vacation leave left.'
+          : t === 'emergency' ? 'Emergency leave does not use a balance.' : '';
+      }
+
+      function preview() {
+        const box = document.getElementById('preview');
+        const r = F.validate(key, values());
+        const labels = def.computedLabels || {};
+        if (!Object.keys(r.errors).length) {
+          const parts = Object.keys(labels).filter((k) => r.computed[k] != null).map((k) => labels[k] + ': ' + r.computed[k]);
+          if (parts.length) { box.textContent = parts.join(' · '); box.className = 'preview'; box.hidden = false; } else box.hidden = true;
+        } else if (r.errors._form) {
+          box.textContent = r.errors._form; box.className = 'preview warn'; box.hidden = false;
+        } else box.hidden = true;
+      }
+
+      document.getElementById('form').addEventListener('input', () => { balanceNote(); preview(); });
+      document.getElementById('form').addEventListener('change', () => { balanceNote(); preview(); });
+      balanceNote();
+
+      document.getElementById('form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById('msg');
+        msg.hidden = true;
+        fields.forEach((f) => { document.getElementById('e-' + f.key).hidden = true; });
+        const r = F.validate(key, values());
+        const keys = Object.keys(r.errors);
+        if (keys.length) {
+          keys.forEach((k) => {
+            const el = document.getElementById('e-' + k);
+            if (el) { el.textContent = r.errors[k]; el.hidden = false; }
+          });
+          RH.showMsg(msg, r.errors._form || 'Check the highlighted fields and try again.', 'error');
+          const first = fields.find((f) => r.errors[f.key]);
+          if (first) document.getElementById('f-' + first.key).focus();
+          return;
+        }
+        const btn = document.getElementById('submit');
+        btn.disabled = true; btn.textContent = 'Submitting…';
+        try {
+          const data = await RH.api('/requests', { method: 'POST', body: { formType: key, data: values() } });
+          location.replace('/request.html?id=' + data.request.id);
+        } catch (err) {
+          RH.showMsg(msg, err.message, 'error');
+          btn.disabled = false; btn.textContent = 'Submit request';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

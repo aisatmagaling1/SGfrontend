@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("rh-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/theme.css">
+<title>Users · Request Hub</title>
+</head>
+<body>
+  <div id="app"></div>
+  <dialog id="temp-dialog">
+    <h2>Temporary password</h2>
+    <p id="temp-for"></p>
+    <div class="temp-pw" id="temp-pw"></div>
+    <p>Give this to the person now. It is shown only once, and they must choose a new password when they log in.</p>
+    <div class="actions"><button type="button" class="btn btn-primary" id="temp-close">Done</button></div>
+  </dialog>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/config.js"></script>
+  <script src="/js/app.js"></script>
+  <script>
+    (async () => {
+      const me = await RH.requireUser({ roles: ['hr'] });
+      const shell = RH.renderShell(me, 'users');
+      shell.setTitle('Users');
+      shell.main.innerHTML =
+        '<div id="notice" class="msg" role="status" hidden></div>' +
+        '<section class="card"><h2>Waiting for approval <span class="count" id="pending-count">0</span></h2>' +
+        '<div class="table-wrap" id="pending-box"></div></section>' +
+        '<section class="card"><h2>All accounts</h2><div class="table-wrap" id="all-box"></div></section>';
+
+      const ROLES = ['employee', 'supervisor', 'manager', 'hr', 'accounting'];
+      let users = [];
+
+      function notice(text, kind) { RH.showMsg(document.getElementById('notice'), text, kind); window.scrollTo({ top: 0 }); }
+
+      function options(list, selected, blank) {
+        return '<option value="">' + RH.esc(blank) + '</option>' +
+          list.map((o) => '<option value="' + RH.esc(o.value) + '"' + (o.value === selected ? ' selected' : '') + '>' + RH.esc(o.label) + '</option>').join('');
+      }
+
+      function row(u, mode) {
+        const isMe = u.id === me.id;
+        const sups = users.filter((x) => x.status === 'active' && x.role === 'supervisor' && x.id !== u.id).map((x) => ({ value: x.id, label: x.fullName }));
+        const mgrs = users.filter((x) => x.status === 'active' && x.role === 'manager' && x.id !== u.id).map((x) => ({ value: x.id, label: x.fullName }));
+        const roles = ROLES.map((r) => ({ value: r, label: RH.ROLE_LABELS[r] }));
+        const dis = isMe ? ' disabled' : '';
+        let actions = '';
+        if (isMe) actions = '<span class="badge active">You</span>';
+        else if (u.status === 'pending') actions = '<button class="btn btn-primary btn-sm" data-act="approve">Approve</button><button class="btn btn-danger btn-sm" data-act="decline">Decline</button>';
+        else if (u.status === 'active') actions = '<button class="btn btn-primary btn-sm" data-act="save">Save</button><button class="btn btn-sm" data-act="reset">Reset password</button><button class="btn btn-danger btn-sm" data-act="disable">Turn off</button>';
+        else actions = '<button class="btn btn-primary btn-sm" data-act="enable">Turn on</button>';
+        return '<tr data-id="' + RH.esc(u.id) + '">' +
+          '<td class="person"><strong>' + RH.esc(u.fullName) + '</strong><small>' + RH.esc(u.email) + '</small></td>' +
+          '<td><select class="sel sel-role" aria-label="Role for ' + RH.esc(u.fullName) + '"' + dis + '>' + options(roles, u.role, 'Choose role') + '</select></td>' +
+          '<td><select class="sel sel-sup" aria-label="Supervisor for ' + RH.esc(u.fullName) + '"' + dis + '>' + options(sups, u.supervisor, 'No supervisor') + '</select></td>' +
+          '<td><select class="sel sel-mgr" aria-label="Manager for ' + RH.esc(u.fullName) + '"' + dis + '>' + options(mgrs, u.manager, 'No manager') + '</select></td>' +
+          (mode === 'all' ? '<td><input class="sel num sel-sick" type="number" min="0" max="365" step="0.5" value="' + RH.esc(u.sickDays) + '" aria-label="Sick days for ' + RH.esc(u.fullName) + '"' + dis + '></td>' +
+            '<td><input class="sel num sel-vac" type="number" min="0" max="365" step="0.5" value="' + RH.esc(u.vacationDays) + '" aria-label="Vacation days for ' + RH.esc(u.fullName) + '"' + dis + '></td>' +
+            '<td><span class="badge ' + RH.esc(u.status) + '">' + RH.esc(u.status) + '</span></td>' : '') +
+          '<td><div class="actions">' + actions + '</div></td></tr>';
+      }
+
+      function table(list, mode) {
+        if (!list.length) return '<p class="empty">' + (mode === 'pending' ? 'No one is waiting for approval.' : 'No accounts yet.') + '</p>';
+        return '<table class="table"><thead><tr><th>Person</th><th>Role</th><th>Supervisor</th><th>Manager</th>' +
+          (mode === 'all' ? '<th>Sick days</th><th>Vacation days</th><th>Status</th>' : '') + '<th>Actions</th></tr></thead><tbody>' +
+          list.map((u) => row(u, mode)).join('') + '</tbody></table>';
+      }
+
+      // Supervisor applies to employees; manager applies to employees and supervisors.
+      function syncRow(tr) {
+        const role = tr.querySelector('.sel-role').value;
+        const sup = tr.querySelector('.sel-sup');
+        const mgr = tr.querySelector('.sel-mgr');
+        if (tr.querySelector('.sel-role').disabled) return;
+        sup.disabled = role !== 'employee';
+        mgr.disabled = !(role === 'employee' || role === 'supervisor');
+        if (sup.disabled) sup.value = '';
+        if (mgr.disabled) mgr.value = '';
+      }
+
+      function paint() {
+        const pending = users.filter((u) => u.status === 'pending');
+        document.getElementById('pending-count').textContent = pending.length;
+        document.getElementById('pending-box').innerHTML = table(pending, 'pending');
+        document.getElementById('all-box').innerHTML = table(users.filter((u) => u.status !== 'pending'), 'all');
+        document.querySelectorAll('tbody tr').forEach(syncRow);
+      }
+
+      async function load() {
+        users = (await RH.api('/users')).users;
+        paint();
+      }
+
+      // Live: keep the waiting list current without disturbing rows being edited.
+      function paintPending() {
+        const pending = users.filter((u) => u.status === 'pending');
+        document.getElementById('pending-count').textContent = pending.length;
+        document.getElementById('pending-box').innerHTML = table(pending, 'pending');
+        document.querySelectorAll('#pending-box tbody tr').forEach(syncRow);
+      }
+
+      async function refreshPending() {
+        const fresh = (await RH.api('/users')).users;
+        const box = document.getElementById('pending-box');
+        const old = {};
+        box.querySelectorAll('tr[data-id]').forEach((tr) => {
+          old[tr.dataset.id] = { role: tr.querySelector('.sel-role').value, sup: tr.querySelector('.sel-sup').value, mgr: tr.querySelector('.sel-mgr').value };
+        });
+        const same = fresh.filter((u) => u.status === 'pending').map((u) => u.id).join() === Object.keys(old).join();
+        users = fresh;
+        if (same) return;
+        paintPending();
+        box.querySelectorAll('tr[data-id]').forEach((tr) => {
+          const s = old[tr.dataset.id];
+          if (!s) return;
+          tr.querySelector('.sel-role').value = s.role;
+          syncRow(tr);
+          tr.querySelector('.sel-sup').value = s.sup;
+          tr.querySelector('.sel-mgr').value = s.mgr;
+        });
+      }
+
+      shell.main.addEventListener('change', (e) => {
+        if (e.target.classList.contains('sel-role')) syncRow(e.target.closest('tr'));
+      });
+
+      shell.main.addEventListener('click', async (e) => {
+        const btn = e.target.closest('button[data-act]');
+        if (!btn) return;
+        const tr = btn.closest('tr');
+        const id = tr.dataset.id;
+        const act = btn.dataset.act;
+        const person = users.find((u) => u.id === id);
+        const role = tr.querySelector('.sel-role').value;
+        const supervisor = tr.querySelector('.sel-sup').value || null;
+        const manager = tr.querySelector('.sel-mgr').value || null;
+        try {
+          btn.disabled = true;
+          if (act === 'approve' || act === 'enable') {
+            if (!role) { notice('Choose a role first.', 'error'); return; }
+            await RH.api('/users/' + id, { method: 'PATCH', body: { status: 'active', role, supervisor, manager } });
+            notice(person.fullName + ' is approved as ' + RH.ROLE_LABELS[role] + '.', 'success');
+          } else if (act === 'save') {
+            if (!role) { notice('Choose a role first.', 'error'); return; }
+            const sickEl = tr.querySelector('.sel-sick');
+            const vacEl = tr.querySelector('.sel-vac');
+            await RH.api('/users/' + id, { method: 'PATCH', body: { role, supervisor, manager, sickDays: sickEl ? sickEl.value : undefined, vacationDays: vacEl ? vacEl.value : undefined } });
+            notice('Saved changes for ' + person.fullName + '.', 'success');
+          } else if (act === 'decline' || act === 'disable') {
+            if (!confirm('Turn off the account for ' + person.fullName + '? They will not be able to log in.')) return;
+            await RH.api('/users/' + id, { method: 'PATCH', body: { status: 'disabled' } });
+            notice('Account turned off for ' + person.fullName + '.', 'success');
+          } else if (act === 'reset') {
+            if (!confirm('Create a temporary password for ' + person.fullName + '? Their current password will stop working.')) return;
+            const r = await RH.api('/users/' + id + '/reset-password', { method: 'POST' });
+            document.getElementById('temp-for').textContent = 'For ' + r.fullName + ':';
+            document.getElementById('temp-pw').textContent = r.tempPassword;
+            document.getElementById('temp-dialog').showModal();
+          }
+          await load();
+        } catch (err) {
+          notice(err.message, 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      document.getElementById('temp-close').addEventListener('click', () => {
+        document.getElementById('temp-dialog').close();
+        document.getElementById('temp-pw').textContent = '';
+      });
+
+      try { await load(); } catch (err) { notice(err.message, 'error'); }
+      RH.live(refreshPending);
+    })();
+  </script>
+</body>
+</html>

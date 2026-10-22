@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("rh-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/theme.css">
+<title>Log in · Request Hub</title>
+</head>
+<body>
+  <main class="auth">
+    <section class="auth-brand">
+      <div class="logo-card"><img src="/img/logo.png" alt="Steniel Graham Packaging Philippines Corporation"></div>
+      <p class="brand-line">Requests, approvals and records for Steniel Graham staff.</p>
+    </section>
+    <section class="auth-panel">
+      <button type="button" class="icon-btn theme-corner" data-theme-toggle></button>
+      <form class="auth-form" id="form" novalidate>
+        <h1>Welcome back</h1>
+        <p class="sub">Log in to continue.</p>
+        <div id="msg" class="msg" role="alert" hidden></div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <div class="pw-wrap"><input id="password" type="password" autocomplete="current-password" required data-eye></div>
+        </div>
+        <div class="auth-links"><a href="#" id="forgot">Forgot password?</a></div>
+        <button class="btn btn-primary btn-block" id="submit" type="submit">Log in</button>
+        <p class="auth-alt">New here? <a href="/signup.html">Create an account</a></p>
+      </form>
+    </section>
+  </main>
+  <script src="/js/config.js"></script>
+  <script src="/js/app.js"></script>
+  <script>
+    (async () => {
+      try { const me = await RH.api('/auth/me'); location.replace(me.user.mustChangePassword ? '/change-password.html' : '/dashboard.html'); return; } catch (e) {}
+      const form = document.getElementById('form');
+      const msg = document.getElementById('msg');
+      const btn = document.getElementById('submit');
+      document.getElementById('forgot').addEventListener('click', (e) => {
+        e.preventDefault();
+        RH.showMsg(msg, 'Ask HR to reset your password. HR will give you a temporary password to use once.', '');
+      });
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        msg.hidden = true;
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value;
+        if (!email || !password) { RH.showMsg(msg, 'Enter your email and password.', 'error'); return; }
+        btn.disabled = true; btn.textContent = 'Logging in…';
+        try {
+          const data = await RH.api('/auth/login', { method: 'POST', body: { email, password } });
+          location.replace(data.user.mustChangePassword ? '/change-password.html' : '/dashboard.html');
+        } catch (err) {
+          RH.showMsg(msg, err.message, 'error');
+          btn.disabled = false; btn.textContent = 'Log in';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

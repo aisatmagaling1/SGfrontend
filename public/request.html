@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("rh-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/theme.css">
+<title>Request · Request Hub</title>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/config.js"></script>
+  <script src="/js/app.js"></script>
+  <script src="/js/forms.js"></script>
+  <script>
+    (async () => {
+      const user = await RH.requireUser();
+      const F = window.RH_FORMS;
+      const id = new URLSearchParams(location.search).get('id');
+      let first;
+      try { first = (await RH.api('/requests/' + encodeURIComponent(id))).request; } catch (err) {
+        const shell = RH.renderShell(user, 'dashboard');
+        shell.setTitle('Request');
+        shell.main.innerHTML = '<section class="card"><h2>Request not found</h2><p>This request does not exist, or you cannot see it.</p><a class="btn" href="/dashboard.html">Back to dashboard</a></section>';
+        return;
+      }
+      const mine = first.requester.id === user.id;
+      const shell = RH.renderShell(user, mine ? 'requests' : (['hr', 'accounting'].includes(user.role) ? 'recent' : 'approvals'));
+      shell.setTitle(first.label);
+      shell.main.innerHTML = '<div id="detail"></div><div id="actions"></div>';
+
+      const ROLE = { supervisor: 'Supervisor', manager: 'Manager', hr: 'HR' };
+      const STATE = { waiting: 'Waiting', approved: 'Approved', rejected: 'Rejected', skipped: 'Skipped', closed: 'Closed' };
+      const STAMP = { approved: 'APPROVED', rejected: 'NOT APPROVED', cancelled: 'CANCELLED' };
+      let actionsKey = null;
+
+      function detailHtml(r) {
+        const rows = F.rows(r.formType, r.data, r.computed).map((p) => '<dt>' + RH.esc(p[0]) + '</dt><dd>' + RH.esc(p[1]) + '</dd>').join('');
+        const stamp = STAMP[r.status] ? '<div class="stamp ' + r.status + '">' + STAMP[r.status] + '</div>' : '';
+        const chain = r.steps.map((s) => {
+          const who = s.state === 'skipped' ? 'Not needed' : (s.decidedByName || s.approverName || (s.role === 'hr' ? 'Any HR' : ''));
+          return '<div class="step ' + s.state + '"><small>' + ROLE[s.role] + '</small><strong>' + RH.esc(who) + '</strong>' +
+            '<div class="st">' + STATE[s.state] + (s.decidedAt ? ' · ' + RH.esc(RH.fmtDate(s.decidedAt)) : '') + '</div>' +
+            (s.remarks ? '<div class="rm">“' + RH.esc(s.remarks) + '”</div>' : '') + '</div>';
+        }).join('');
+        const timeline = r.timeline.map((t) => '<li><strong>' + RH.esc(t.action) + '</strong> — ' + RH.esc(t.byName || '') +
+          '<small>' + RH.esc(RH.fmtDateTime(t.at)) + '</small>' + (t.note ? '<div>' + RH.esc(t.note) + '</div>' : '') + '</li>').join('');
+        return '<section class="card stamp-host">' + stamp +
+          '<div class="card-head"><h2>' + RH.esc(r.label) + '</h2>' + RH.statusBadge(r.status) + '</div>' +
+          '<p>' + RH.esc(r.refNo) + ' · Filed by <strong>' + RH.esc(r.requester.name) + '</strong> on ' + RH.esc(RH.fmtDate(r.createdAt)) + '</p>' +
+          '<dl class="kv">' + rows + '</dl></section>' +
+          '<section class="card"><h2>Approvals</h2><div class="chain">' + chain + '</div></section>' +
+          '<section class="card"><h2>History</h2><ul class="timeline">' + timeline + '</ul></section>';
+      }
+
+      function actionsHtml(r) {
+        let h = '';
+        if (r.canAct) {
+          h += '<section class="card"><h2>Your decision</h2><div class="field"><label for="remarks">Remarks (required if you reject)</label>' +
+            '<textarea id="remarks" maxlength="500"></textarea></div><div id="decide-msg" class="msg" role="alert" hidden></div>' +
+            '<div class="btn-row"><button class="btn btn-primary" id="approve">Approve</button>' +
+            '<button class="btn btn-danger" id="reject">Reject</button></div></section>';
+        }
+        if (r.canCancel) {
+          h += '<section class="card"><h2>Cancel this request</h2><p>You can cancel while it is still pending.</p>' +
+            '<div id="cancel-msg" class="msg" role="alert" hidden></div><button class="btn btn-danger" id="cancel">Cancel request</button></section>';
+        }
+        return h;
+      }
+
+      function render(r) {
+        document.getElementById('detail').innerHTML = detailHtml(r);
+        // Only rebuild the decision box when it changes, so typed remarks are not lost.
+        const key = [r.canAct, r.canCancel, r.status].join('|');
+        if (key !== actionsKey) { actionsKey = key; document.getElementById('actions').innerHTML = actionsHtml(r); }
+      }
+
+      async function act(path, body, msgId) {
+        const box = document.getElementById(msgId);
+        try {
+          const data = await RH.api('/requests/' + id + '/' + path, { method: 'POST', body });
+          render(data.request);
+        } catch (err) {
+          RH.showMsg(box, err.message, 'error');
+        }
+      }
+
+      document.getElementById('actions').addEventListener('click', async (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        btn.disabled = true;
+        const remarks = document.getElementById('remarks') ? document.getElementById('remarks').value : '';
+        if (btn.id === 'approve') await act('approve', { remarks }, 'decide-msg');
+        else if (btn.id === 'reject') {
+          if (!remarks.trim()) RH.showMsg(document.getElementById('decide-msg'), 'Write a reason for rejecting this request.', 'error');
+          else await act('reject', { remarks }, 'decide-msg');
+        } else if (btn.id === 'cancel') {
+          if (confirm('Cancel this request? This cannot be undone.')) await act('cancel', {}, 'cancel-msg');
+        }
+        btn.disabled = false;
+      });
+
+      render(first);
+      RH.live(async () => { render((await RH.api('/requests/' + encodeURIComponent(id))).request); });
+    })();
+  </script>
+</body>
+</html>
